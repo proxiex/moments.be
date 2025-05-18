@@ -1,0 +1,73 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  password  String
+  avatar    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  events    Event[]    @relation("EventParticipants") // Events the user has joined
+  createdEvents Event[] @relation("EventCreator")    // Events created by this user
+  images    Image[]    // Images uploaded by this user
+}
+
+model Event {
+  id                   String   @id @default(uuid())
+  name                 String
+  description          String?
+  location             String?
+  startDate            DateTime?
+  endDate              DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  creatorId            String
+  isPrivate            Boolean  @default(true)     // Whether only participants can see the event
+  isPublicGallery      Boolean  @default(false)    // Whether the gallery is visible to all visitors
+  maxAttendees         Int?                        // Maximum number of attendees allowed
+  maxPhotosPerAttendee Int?                        // Maximum photos each attendee can upload
+  galleryStyle         String   @default("scrapbook") // Display style: scrapbook, grid, or timeline
+  features             String[] @default([])       // Array of enabled features
+  allowComments        Boolean  @default(false)    // Whether comments are allowed on images
+  coverImageUrl        String?                     // URL for the event cover image
+  
+  // Relations
+  participants User[]   @relation("EventParticipants")
+  creator     User      @relation("EventCreator", fields: [creatorId], references: [id])
+  images      Image[]   // Images associated with this event
+
+  @@index([creatorId])
+}
+
+model Image {
+  id          String   @id @default(uuid())
+  url         String   // Cloudinary URL
+  publicId    String   // Cloudinary public ID for management
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Foreign keys
+  uploaderId  String
+  eventId     String?
+  
+  // Relations
+  uploader    User     @relation(fields: [uploaderId], references: [id])
+  event       Event?   @relation(fields: [eventId], references: [id])
+
+  @@index([uploaderId])
+  @@index([eventId])
+}
