@@ -112,7 +112,7 @@ export const getCurrentUser = async (
   try {
     const userId = req.user?.id;
     if (!userId) {
-      throw new Unauthorized('Auth', 'Not authenticated');
+      next(new Unauthorized('Auth', 'Not authenticated'));
     }
 
     const user = await req.prisma?.user.findUnique({
@@ -134,7 +134,7 @@ export const getCurrentUser = async (
     });
 
     if (!user) {
-      throw new NotFound('User', 'User not found');
+      next(new NotFound('User', 'User not found'));
     }
 
     new ResponseLib(req, res).json(user);

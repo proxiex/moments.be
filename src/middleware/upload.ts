@@ -4,12 +4,12 @@ import multer from 'multer';
 // Configure storage to use memory storage (buffer)
 const storage = multer.memoryStorage();
 
-// Configure file filter to only accept images
+// Configure file filter to accept images and videos
 const fileFilter = (_req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
   if (file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/')) {
     cb(null, true);
   } else {
-    cb(new Error('Only image files are allowed!'));
+    cb(new Error('Only image and video files are allowed!'));
   }
 };
 
@@ -17,7 +17,7 @@ const fileFilter = (_req: Request, file: Express.Multer.File, cb: multer.FileFil
 const upload = multer({
   storage,
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB file size limit
+    fileSize: 100 * 1024 * 1024, // 100MB file size limit for videos
   },
   fileFilter,
 });

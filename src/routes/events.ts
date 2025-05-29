@@ -8,7 +8,6 @@ import {
     joinEvent,
     leaveEvent,
     updateEvent,
-    updateEventVisibility,
     uploadEventCoverImage,
 } from '../controllers/events';
 import { authenticateUser, isEventCreator } from '../middleware/auth';
@@ -257,15 +256,16 @@ router.post('/:id/leave', authenticateUser, leaveEvent);
  *       200:
  *         description: Event visibility updated
  */
-router.put('/:id/visibility', authenticateUser, isEventCreator, updateEventVisibility);
+router.put('/:id/visibility', authenticateUser, isEventCreator, updateEvent);
 
 /**
  * @swagger
- * /api/events/{id}/cover-image:
+ * /api/events/{id}/cover:
  *   post:
  *     tags:
  *       - Events
- *     summary: Upload event cover image
+ *     summary: Upload event cover media
+ *     description: Upload a cover image or video for an event (only creator)
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -280,22 +280,13 @@ router.put('/:id/visibility', authenticateUser, isEventCreator, updateEventVisib
  *         multipart/form-data:
  *           schema:
  *             type: object
+ *             required:
+ *               - image
  *             properties:
- *               coverImage:
+ *               image:
  *                 type: string
  *                 format: binary
- *     responses:
- *       200:
- *         description: Cover image uploaded successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 coverImageUrl:
- *                   type: string
- *                 message:
- *                   type: string
+ *                 description: Image or video file for the event cover
  */
 router.post('/:id/cover-image', authenticateUser, isEventCreator, upload.single('coverImage'), uploadEventCoverImage);
 
@@ -333,7 +324,7 @@ router.post('/:id/cover-image', authenticateUser, isEventCreator, upload.single(
  *             schema:
  *               $ref: '#/components/schemas/Event'
  */
-router.patch('/:id/visibility', authenticateUser, isEventCreator, updateEventVisibility);
+router.patch('/:id/visibility', authenticateUser, isEventCreator, updateEvent);
 
 /**
  * @swagger
@@ -375,6 +366,46 @@ router.patch('/:id/visibility', authenticateUser, isEventCreator, updateEventVis
  */
 router.get('/my-events', authenticateUser, getUserEvents);
 
+/**
+ * @swagger
+ * /api/events/user:
+ *   get:
+ *     tags:
+ *       - Events
+ *     summary: Get authenticated user's events (alternative route)
+ *     description: Retrieve all events that the authenticated user has created or joined
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: User's events retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                   example: success
+ *                 message:
+ *                   type: string
+ *                   example: User events fetched successfully
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     created:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/Event'
+ *                     joined:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/Event'
+ *       401:
+ *         $ref: '#/components/responses/UnauthorizedError'
+ */
+router.get('/user', authenticateUser, getUserEvents);
+
 
 /**
  * @swagger
@@ -383,24 +414,70 @@ router.get('/my-events', authenticateUser, getUserEvents);
  *     tags:
  *       - Events
  *     summary: Get event by ID
- *     description: Retrieve a single event by its ID (respects visibility settings)
+ *     description: Get detailed event information including paginated media files
  *     parameters:
  *       - in: path
  *         name: id
  *         required: true
  *         schema:
  *           type: string
- *     security:
- *       - bearerAuth: []
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number for media pagination
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 20
+ *         description: Number of media items per page
  *     responses:
  *       200:
- *         description: Event details
+ *         description: Event details with paginated media
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/Event'
- *       404:
- *         description: Event not found
+ *               type: object
+ *               properties:
+ *                 id:
+ *                   type: string
+ *                 name:
+ *                   type: string
+ *                 description:
+ *                   type: string
+ *                 creator:
+ *                   $ref: '#/components/schemas/User'
+ *                 participants:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/User'
+ *                 images:
+ *                   type: object
+ *                   properties:
+ *                     data:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/Media'
+ *                     pagination:
+ *                       type: object
+ *                       properties:
+ *                         currentPage:
+ *                           type: integer
+ *                         totalPages:
+ *                           type: integer
+ *                         totalItems:
+ *                           type: integer
+ *                         itemsPerPage:
+ *                           type: integer
+ *                         hasNextPage:
+ *                           type: boolean
+ *                         hasPreviousPage:
+ *                           type: boolean
  */
 router.get('/:id', authenticateUser, getEventById);
 

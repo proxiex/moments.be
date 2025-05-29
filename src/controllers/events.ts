@@ -1,9 +1,9 @@
-import { Event, User } from '@prisma/client';
+import { Event, EventVisibility, GalleryStyle, ParticipantStatus, User } from '@prisma/client';
 import { NextFunction, Response } from 'express';
 import { BadRequest, Forbidden, NotFound, Unauthorized } from '../libs/Error.Lib';
 import ResponseLib from '../libs/Response.Lib';
 import { AuthRequest, UploadRequest } from '../types';
-import { uploadImage } from '../utils/cloudinary';
+import { getMediaVersions, uploadFile } from '../utils/cloudinary';
 
 interface CreateEventInput {
   name: string;
@@ -11,25 +11,41 @@ interface CreateEventInput {
   location?: string;
   startDate?: string;
   endDate?: string;
-  isPrivate?: boolean;
+  visibility?: EventVisibility;
   isPublicGallery?: boolean;
   maxAttendees?: number;
   maxPhotosPerAttendee?: number;
-  galleryStyle?: 'scrapbook' | 'grid' | 'timeline';
+  galleryStyle?: GalleryStyle;
   features?: string[];
   allowComments?: boolean;
+  allowJoining?: boolean;
   coverImageUrl?: string;
 }
 
-interface UpdateEventInput extends Partial<CreateEventInput> {}
+interface UpdateEventInput extends Partial<Omit<CreateEventInput, 'creatorId' | 'visibility'>> {
+  visibility?: EventVisibility;
+  joinCode?: string | null;
+  joinCodeExpiresAt?: Date | null;
+  
+}
 
 interface EventWithRelations extends Event {
   creator: Pick<User, 'id' | 'name' | 'avatar'>;
-  participants: Array<Pick<User, 'id' | 'name' | 'avatar'>>;
+  participants: Array<{
+    id: string;
+    status: ParticipantStatus;
+    joinedAt: Date;
+    user: Pick<User, 'id' | 'name' | 'avatar'>;
+  }>;
   images: Array<{
     id: string;
     url: string;
     description?: string;
+    mediaType: string;
+    width?: number;
+    height?: number;
+    size?: number;
+    format?: string;
     createdAt: Date;
     uploader: {
       id: string;
@@ -42,6 +58,75 @@ interface EventWithRelations extends Event {
   };
 }
 
+export const createEvent = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { 
+      name, 
+      description, 
+      location, 
+      startDate, 
+      endDate, 
+      visibility, 
+      isPublicGallery, 
+      maxAttendees, 
+      maxPhotosPerAttendee, 
+      galleryStyle, 
+      features, 
+      allowComments,
+      allowJoining,
+      coverImageUrl
+    }: CreateEventInput = req.body;
+    
+    const userId = req.user?.id;
+    if (!userId) {
+      throw new Unauthorized('Authentication required');
+    }
+    if (!name) {
+      throw new BadRequest('Event name is required');
+    }
+    
+    // Create the event
+    const event = await req.prisma?.event.create({
+      data: {
+        name,
+        description,
+        location,
+        startDate: startDate ? new Date(startDate) : null,
+        endDate: endDate ? new Date(endDate) : null,
+        visibility: visibility !== undefined ? visibility : EventVisibility.PRIVATE,
+        isPublicGallery: isPublicGallery !== undefined ? isPublicGallery : false,
+        maxAttendees: maxAttendees || null,
+        maxPhotosPerAttendee: maxPhotosPerAttendee || null,
+        galleryStyle: galleryStyle?.toLocaleUpperCase() as GalleryStyle || GalleryStyle.SCRAPBOOK,
+        features: features || [],
+        allowComments: allowComments !== undefined ? allowComments : false,
+        allowJoining: allowJoining !== undefined ? allowJoining : false,
+        coverImageUrl,
+        creator: { connect: { id: userId } },
+      },
+      include: { creator: { select: { id: true, name: true } } },
+    });
+    
+    // Create the participation record for the creator
+    await req.prisma?.eventParticipant.create({
+      data: {
+        eventId: event!.id,
+        userId,
+        status: ParticipantStatus.JOINED,
+        role: 'ADMIN'
+      }
+    });
+    
+    return void new ResponseLib(req, res).status(201).json(event);
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const getAllEvents = async (
   req: AuthRequest,
   res: Response,
@@ -52,19 +137,35 @@ export const getAllEvents = async (
     const where = userId ? {
       OR: [
         { isPublicGallery: true },
-        { participants: { some: { id: userId } } },
+        { participants: { some: { userId, status: ParticipantStatus.JOINED } } },
         { creatorId: userId }
       ]
     } : { isPublicGallery: true };
+
     const events = await req.prisma?.event.findMany({
       where,
       include: {
         creator: { select: { id: true, name: true, avatar: true } },
-        images: { select: { id: true, url: true }, take: 1 },
-        _count: { select: { participants: true, images: true } },
+        images: { 
+          select: { 
+            id: true, 
+            url: true,
+            mediaType: true,
+            width: true,
+            height: true
+          }, 
+          take: 1 
+        },
+        _count: { 
+          select: { 
+            participants: { where: { status: ParticipantStatus.JOINED } },
+            images: true 
+          } 
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
+
     new ResponseLib(req, res).json({
       status: 'success',
       message: 'Events fetched successfully',
@@ -83,15 +184,41 @@ export const getEventById = async (
   try {
     const { id } = req.params;
     const userId = req.user?.id;
+
     const event = await req.prisma?.event.findUnique({
       where: { id },
       include: {
         creator: { select: { id: true, name: true, avatar: true } },
-        participants: { select: { id: true, name: true, avatar: true } },
-        images: {
-          select: { id: true, url: true, description: true, createdAt: true, uploader: { select: { id: true, name: true } } },
-          orderBy: { createdAt: 'desc' },
+        participants: { 
+          where: { status: ParticipantStatus.JOINED },
+          select: { 
+            id: true, 
+            status: true,
+            joinedAt: true,
+            user: { select: { id: true, name: true, avatar: true } }
+          } 
         },
+        images: {
+          select: {
+            id: true,
+            url: true,
+            description: true,
+            mediaType: true,
+            width: true,
+            height: true,
+            size: true,
+            format: true,
+            createdAt: true,
+            uploader: { select: { id: true, name: true } }
+          },
+          orderBy: { createdAt: 'desc' }
+        },
+        _count: {
+          select: { 
+            participants: { where: { status: ParticipantStatus.JOINED } },
+            images: true 
+          }
+        }
       },
     }) as EventWithRelations | null;
 
@@ -99,74 +226,67 @@ export const getEventById = async (
       throw new NotFound('Event', 'Event not found');
     }
 
-    if (event.isPrivate && !event.isPublicGallery) {
+    // Check access permissions based on visibility
+    if (event.visibility === EventVisibility.PRIVATE && !event.isPublicGallery) {  
       const isCreator = userId === event.creator.id;
-      const isParticipant = event.participants.some(p => p.id === userId);
+      const isParticipant = event.participants.some(p => p.user.id === userId);
       if (!isCreator && !isParticipant) {
         throw new Forbidden('Access denied', 'You do not have permission to view this event');
       }
     }
 
-    new ResponseLib(req, res).json(event);
+    return void new ResponseLib(req, res).json(event);
   } catch (error) {
     next(error);
   }
 };
 
-export const createEvent = async (
+export const deleteEvent = async (
   req: AuthRequest,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { 
-      name, 
-      description, 
-      location, 
-      startDate, 
-      endDate, 
-      isPrivate, 
-      isPublicGallery, 
-      maxAttendees, 
-      maxPhotosPerAttendee, 
-      galleryStyle, 
-      features, 
-      allowComments,
-      coverImageUrl
-    }: CreateEventInput = req.body;
-    
+    const { id } = req.params;
     const userId = req.user?.id;
+    
     if (!userId) {
-      new ResponseLib(req, res).status(401).json({ message: 'Authentication required' });
-      return;
+      throw new Unauthorized('Authentication required');
     }
-    if (!name) {
-      new ResponseLib(req, res).status(400).json({ message: 'Event name is required' });
-      return;
-    }
-    
-    const event = await req.prisma?.event.create({
-      data: {
-        name,
-        description,
-        location,
-        startDate: startDate ? new Date(startDate) : null,
-        endDate: endDate ? new Date(endDate) : null,
-        isPrivate: isPrivate !== undefined ? isPrivate : true,
-        isPublicGallery: isPublicGallery !== undefined ? isPublicGallery : false,
-        maxAttendees: maxAttendees || null,
-        maxPhotosPerAttendee: maxPhotosPerAttendee || null,
-        galleryStyle: galleryStyle || 'scrapbook',
-        features: features || [],
-        allowComments: allowComments !== undefined ? allowComments : false,
-        coverImageUrl,
-        creator: { connect: { id: userId } },
-        participants: { connect: { id: userId } },
-      },
-      include: { creator: { select: { id: true, name: true } } },
+
+    // Check if event exists and user is the creator
+    const event = await req.prisma?.event.findUnique({
+      where: { id },
+      select: { id: true, creatorId: true }
     });
-    
-    new ResponseLib(req, res).status(201).json(event);
+
+    if (!event) {
+      throw new NotFound('Event not found');
+    }
+
+    if (event.creatorId !== userId) {
+      throw new Forbidden('Only the event creator can delete this event');
+    }
+
+    // First delete all event participants
+    await req.prisma?.eventParticipant.deleteMany({
+      where: { eventId: id }
+    });
+
+    // Then delete all images associated with the event
+    await req.prisma?.image.deleteMany({
+      where: { eventId: id }
+    });
+
+    // Finally delete the event
+    await req.prisma?.event.delete({
+      where: { id }
+    });
+
+    return void new ResponseLib(req, res).json({
+      status: 'success',
+      message: 'Event deleted successfully'
+    });
   } catch (error) {
     next(error);
   }
@@ -201,7 +321,7 @@ export const updateEvent = async (
       location,
       startDate,
       endDate,
-      isPrivate,
+      visibility,
       isPublicGallery,
       maxAttendees,
       maxPhotosPerAttendee,
@@ -219,7 +339,7 @@ export const updateEvent = async (
         location,
         startDate: startDate ? new Date(startDate) : undefined,
         endDate: endDate ? new Date(endDate) : undefined,
-        isPrivate: isPrivate !== undefined ? isPrivate : undefined,
+        visibility: visibility !== undefined ? visibility : undefined,
         isPublicGallery: isPublicGallery !== undefined ? isPublicGallery : undefined,
         maxAttendees: maxAttendees !== undefined ? maxAttendees : undefined,
         maxPhotosPerAttendee: maxPhotosPerAttendee !== undefined ? maxPhotosPerAttendee : undefined,
@@ -234,32 +354,11 @@ export const updateEvent = async (
       },
     });
     
-    new ResponseLib(req, res).json({
+    return void new ResponseLib(req, res).json({
       status: 'success',
       message: 'Event updated successfully',
       data: event
     });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const deleteEvent = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
-  try {
-    const { id } = req.params;
-    const event = await req.prisma?.event.findUnique({ where: { id } });
-    
-    if (!event) {
-      throw new NotFound('Event', 'Event not found');
-    }
-
-    await req.prisma?.image.deleteMany({ where: { eventId: id } });
-    await req.prisma?.event.delete({ where: { id } });
-    new ResponseLib(req, res).json({ message: 'Event deleted successfully' });
   } catch (error) {
     next(error);
   }
@@ -271,23 +370,101 @@ export const joinEvent = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { id } = req.params;
+    const { id: eventId } = req.params;
     const userId = req.user?.id;
-    
+    const { joinCode } = req.body as { joinCode?: string };
+
     if (!userId) {
-      throw new Unauthorized('Authentication', 'Authentication required');
+      throw new Unauthorized('Authentication required');
     }
 
-    const event = await req.prisma?.event.findUnique({ where: { id } });
-    if (!event) {
-      throw new NotFound('Event', 'Event not found');
-    }
-
-    await req.prisma?.event.update({
-      where: { id },
-      data: { participants: { connect: { id: userId } } },
+    // First get the event with participant count
+    const eventWithCount = await req.prisma?.event.findUnique({
+      where: { id: eventId },
+      select: {
+        id: true,
+        creatorId: true,
+        allowJoining: true,
+        joinCode: true,
+        maxAttendees: true,
+        _count: {
+          select: {
+            participants: { 
+              where: { 
+                status: 'JOINED' as const
+              } 
+            }
+          }
+        }
+      },
     });
-    new ResponseLib(req, res).json({ message: 'Successfully joined event' });
+
+    if (!eventWithCount) {
+      throw new NotFound('Event not found');
+    }
+
+    // Check existing participation
+    const existingParticipation = await req.prisma?.eventParticipant.findFirst({
+      where: { 
+        eventId,
+        userId,
+      },
+      select: { 
+        id: true, 
+        status: true 
+      },
+    });
+
+    if (existingParticipation) {
+      if (existingParticipation.status === 'JOINED') {
+        throw new BadRequest('You are already a participant of this event');
+      }
+      if (existingParticipation.status === 'LEFT') {
+        // Update existing participation
+        await req.prisma?.eventParticipant.update({
+          where: { id: existingParticipation.id },
+          data: { 
+            status: 'JOINED' as const,
+            leftAt: null
+          },
+        });
+        
+        return void new ResponseLib(req, res).json({
+          status: 'success',
+          message: 'Successfully rejoined the event',
+        });
+      }
+    }
+
+    // Check if event allows joining
+    if (!eventWithCount.allowJoining && eventWithCount.creatorId !== userId) {
+      throw new Forbidden('This event is not accepting new participants');
+    }
+
+    // Check join code if required
+    if (eventWithCount.joinCode && eventWithCount.joinCode !== joinCode) {
+      throw new Forbidden('Invalid join code');
+    }
+
+    // Check max attendees if set
+    if (eventWithCount.maxAttendees && eventWithCount._count.participants >= eventWithCount.maxAttendees) {
+      throw new BadRequest('This event has reached maximum capacity');
+    }
+
+    // Create new participation
+    await req.prisma?.eventParticipant.create({
+      data: {
+        eventId,
+        userId,
+        status: 'JOINED' as const,
+        role: eventWithCount.creatorId === userId ? 'ADMIN' : 'ATTENDEE',
+      },
+    });
+
+    return void new ResponseLib(req, res).json({
+      status: 'success',
+      message: 'Successfully joined the event',
+    });
   } catch (error) {
     next(error);
   }
@@ -299,31 +476,46 @@ export const leaveEvent = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { id } = req.params;
+    const { id: eventId } = req.params;
     const userId = req.user?.id;
-    
+
     if (!userId) {
-      throw new Unauthorized('Authentication', 'Authentication required');
+      throw new Unauthorized('Authentication required');
     }
 
-    const event = await req.prisma?.event.findUnique({ where: { id } });
-    if (!event) {
-      throw new NotFound('Event', 'Event not found');
-    }
-
-    await req.prisma?.event.update({
-      where: { id },
-      data: { participants: { disconnect: { id: userId } } },
+    const participation = await req.prisma?.eventParticipant.findFirst({
+      where: { 
+        eventId,
+        userId,
+        status: 'JOINED' as const
+      },
+      select: { id: true }
     });
-    new ResponseLib(req, res).json({ message: 'Successfully left event' });
+
+    if (!participation) {
+      throw new BadRequest('You are not a participant of this event');
+    }
+
+    // Mark as left instead of deleting to preserve history
+    await req.prisma?.eventParticipant.update({
+      where: { id: participation.id },
+      data: { 
+        status: 'LEFT' as const,
+        leftAt: new Date()
+      },
+    });
+
+    return void new ResponseLib(req, res).json({
+      status: 'success',
+      message: 'Successfully left the event',
+    });
   } catch (error) {
     next(error);
   }
 };
 
-/**
- * Upload an event cover image
- */
+// ... rest of the file ...
+
 export const uploadEventCoverImage = async (
   req: UploadRequest,
   res: Response,
@@ -331,7 +523,7 @@ export const uploadEventCoverImage = async (
 ): Promise<void> => {
   try {
     if (!req.file) {
-      throw new BadRequest('Upload', 'No image file provided');
+      throw new BadRequest('Upload', 'No media file provided');
     }
 
     const eventId = req.params.id;
@@ -356,13 +548,23 @@ export const uploadEventCoverImage = async (
 
     // Only the event creator can update the cover image
     if (event.creatorId !== userId) {
-      throw new Forbidden('Access', 'Only the event creator can update the cover image');
+      throw new Forbidden('Access', 'Only the event creator can update the cover media');
     }
 
+    // Determine media type
+    const mediaType = req.file.mimetype.startsWith('video/') ? 'video' : 'image';
+
     // Upload to Cloudinary
-    const result = await uploadImage(req.file.buffer, `scrapbook_events/covers`);
+    const result = await uploadFile(
+      req.file.buffer,
+      `scrapbook_events/covers`,
+      mediaType
+    );
+
+    // Get different versions of the media
+    const versions = getMediaVersions(result.secure_url, mediaType);
     
-    // Update event with new cover image URL
+    // Update event with new cover media URL
     await req.prisma?.event.update({
       where: { id: eventId },
       data: {
@@ -370,38 +572,13 @@ export const uploadEventCoverImage = async (
       },
     });
 
-    // Return the cover image URL
+    // Return the cover media URL with versions
     new ResponseLib(req, res).json({
       coverImageUrl: result.secure_url,
-      message: 'Cover image updated successfully',
+      versions,
+      mediaType,
+      message: `Cover ${mediaType} updated successfully`,
     });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const updateEventVisibility = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
-  try {
-    const { id } = req.params;
-    const event = await req.prisma?.event.findUnique({ where: { id } });
-    
-    if (!event) {
-      throw new NotFound('Event', 'Event not found');
-    }
-
-    const { isPrivate, isPublicGallery } = req.body;
-    const updatedEvent = await req.prisma?.event.update({
-      where: { id },
-      data: {
-        isPrivate: isPrivate !== undefined ? isPrivate : undefined,
-        isPublicGallery: isPublicGallery !== undefined ? isPublicGallery : undefined,
-      },
-    });
-    new ResponseLib(req, res).json(updatedEvent);
   } catch (error) {
     next(error);
   }
@@ -416,14 +593,21 @@ export const getUserEvents = async (
     const userId = req.user?.id;
     
     if (!userId) {
-      throw new Unauthorized('Authentication', 'Authentication required');
+      throw new Unauthorized('Authentication required');
     }
 
     const events = await req.prisma?.event.findMany({
       where: {
         OR: [
           { creatorId: userId },
-          { participants: { some: { id: userId } } }
+          { 
+            participants: { 
+              some: { 
+                userId, 
+                status: ParticipantStatus.JOINED 
+              } 
+            } 
+          }
         ]
       },
       include: {
@@ -435,10 +619,16 @@ export const getUserEvents = async (
           } 
         },
         participants: {
+          where: { status: ParticipantStatus.JOINED },
           select: {
             id: true,
-            name: true,
-            avatar: true
+            user: {
+              select: {
+                id: true,
+                name: true,
+                avatar: true
+              }
+            }
           }
         },
         images: { 
@@ -450,7 +640,7 @@ export const getUserEvents = async (
         },
         _count: { 
           select: { 
-            participants: true, 
+            participants: { where: { status: ParticipantStatus.JOINED } }, 
             images: true 
           } 
         },
@@ -464,7 +654,7 @@ export const getUserEvents = async (
     const createdEvents = events?.filter(event => event.creatorId === userId);
     const joinedEvents = events?.filter(event => event.creatorId !== userId);
 
-    new ResponseLib(req, res).json({
+    return void new ResponseLib(req, res).json({
       status: 'success',
       message: 'User events fetched successfully',
       data: {

@@ -10,53 +10,107 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum EventVisibility {
+  PRIVATE
+  PUBLIC
+  INVITE_ONLY
+}
+
+enum ParticipantStatus {
+  PENDING
+  JOINED
+  DECLINED
+  LEFT
+}
+
+enum GalleryStyle {
+  SCRAPBOOK
+  GRID
+  TIMELINE
+}
+
 model User {
-  id        String   @id @default(uuid())
-  name      String
-  email     String   @unique
-  password  String
-  avatar    String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id               String             @id @default(uuid())
+  name             String
+  email            String             @unique
+  password         String
+  avatar           String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
 
   // Relations
-  events    Event[]    @relation("EventParticipants") // Events the user has joined
-  createdEvents Event[] @relation("EventCreator")    // Events created by this user
-  images    Image[]    // Images uploaded by this user
+  participations   EventParticipant[]
+  createdEvents    Event[]            @relation("EventCreator")
+  images          Image[]
+  
+  // Backward compatibility
+  events          Event[]            @relation("EventParticipants")
 }
 
 model Event {
-  id                   String   @id @default(uuid())
+  id                   String             @id @default(uuid())
   name                 String
   description          String?
   location             String?
   startDate            DateTime?
   endDate              DateTime?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
   creatorId            String
-  isPrivate            Boolean  @default(true)     // Whether only participants can see the event
-  isPublicGallery      Boolean  @default(false)    // Whether the gallery is visible to all visitors
-  maxAttendees         Int?                        // Maximum number of attendees allowed
-  maxPhotosPerAttendee Int?                        // Maximum photos each attendee can upload
-  galleryStyle         String   @default("scrapbook") // Display style: scrapbook, grid, or timeline
-  features             String[] @default([])       // Array of enabled features
-  allowComments        Boolean  @default(false)    // Whether comments are allowed on images
-  coverImageUrl        String?                     // URL for the event cover image
+  visibility           EventVisibility   @default(PRIVATE)
+  isPublicGallery      Boolean           @default(false)
+  maxAttendees         Int?             
+  maxPhotosPerAttendee Int?             
+  galleryStyle         GalleryStyle      @default(SCRAPBOOK)
+  allowComments        Boolean           @default(false)
+  coverImageUrl        String?           
+  allowJoining         Boolean           @default(false)
+  joinCode             String?           @unique
+  joinCodeExpiresAt    DateTime?         // Optional: Set expiration for join codes
+  features             String[]          @default([])
   
   // Relations
-  participants User[]   @relation("EventParticipants")
-  creator     User      @relation("EventCreator", fields: [creatorId], references: [id])
-  images      Image[]   // Images associated with this event
+  participants         EventParticipant[]
+  creator              User              @relation("EventCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  images               Image[]
+  
+  // Backward compatibility
+  events              User[]             @relation("EventParticipants")
+
 
   @@index([creatorId])
+  @@index([joinCode])
+}
+
+model EventParticipant {
+  id          String           @id @default(uuid())
+  eventId     String
+  userId      String
+  status      ParticipantStatus @default(PENDING)
+  joinedAt    DateTime        @default(now())
+  leftAt      DateTime?
+  role        String          @default("ATTENDEE") // e.g., "ADMIN", "MODERATOR", "ATTENDEE"
+  metadata    Json?           // For any additional data
+
+  // Relations
+  event       Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+  @@index([eventId])
+  @@index([userId])
 }
 
 model Image {
   id          String   @id @default(uuid())
-  url         String   // Cloudinary URL
-  publicId    String   // Cloudinary public ID for management
+  url         String
+  publicId    String
   description String?
+  mediaType   String   @default("image")
+  width       Int?
+  height      Int?
+  size        Int?     // File size in bytes
+  format      String?  // File format (jpg, png, etc.)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   
@@ -65,8 +119,9 @@ model Image {
   eventId     String?
   
   // Relations
-  uploader    User     @relation(fields: [uploaderId], references: [id])
-  event       Event?   @relation(fields: [eventId], references: [id])
+  uploader    User     @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+  event       Event?   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
 
   @@index([uploaderId])
   @@index([eventId])

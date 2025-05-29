@@ -67,6 +67,7 @@ app.use((req: express.Request, res: express.Response) => {
 
 app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   LoggerLib.error(err);
+  console.log(' ->>>>>> ',err);
   let message = 'Server Error', statusCode = 500;
   if (err instanceof ErrorLib) {
     message = err.message;
