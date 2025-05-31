@@ -61,6 +61,10 @@ app.get('/api/health', (req, res) => {
   return new ResponseLib(req, res).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+app.get('*', (req, res) => {
+  return new ResponseLib(req, res).status(404).json({ message: 'Welcome to Moments API v1.0.0', docs: 'http://localhost:4000/api-docs'});
+});
+
 app.use((req: express.Request, res: express.Response) => {
   new ResponseLib(req, res).status(404).json({ message: 'Not Found' });
 });
