@@ -393,10 +393,10 @@ interface GalleryFilters {
   mediaType?: 'image' | 'video' | 'all';
 }
 
-interface GallerySort {
-  field: 'createdAt' | 'eventDate';
-  order: 'asc' | 'desc';
-}
+// interface GallerySort {
+//   field: 'createdAt' | 'eventDate';
+//   order: 'asc' | 'desc';
+// }
 
 export const getUserGallery = async (
   req: UploadRequest,

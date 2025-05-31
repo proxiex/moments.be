@@ -1,7 +1,7 @@
 import { NextFunction, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { Forbidden, NotFound, Unauthorized } from '../libs/Error.Lib';
-import { AuthRequest } from '../types';
+import { AuthRequest, JwtPayload } from '../types';
 
 // Extract and verify JWT token from request
 export const authenticateUser = async (
@@ -24,11 +24,7 @@ export const authenticateUser = async (
       return;
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as {
-      id: string;
-      email: string;
-      name: string;
-    };
+    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as JwtPayload;
     
     req.user = decoded;
     next();

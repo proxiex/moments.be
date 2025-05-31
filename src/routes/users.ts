@@ -7,6 +7,9 @@ import {
     updateUser,
     getUserCreatedEvents,
     getUserJoinedEvents,
+    getUserProfile,
+    getUserMediaStats,
+    getUserActivities,
 } from '../controllers/users';
 import { authenticateUser } from '../middleware/auth';
 
@@ -237,5 +240,106 @@ router.get('/events/created', authenticateUser, getUserCreatedEvents);
  *                     $ref: '#/components/schemas/Event'
  */
 router.get('/events/joined', authenticateUser, getUserJoinedEvents);
+
+/**
+ * @swagger
+ * /api/users/{id}/profile:
+ *   get:
+ *     tags:
+ *       - Users
+ *     summary: Get detailed user profile
+ *     description: Retrieve detailed information about a user's profile including statistics
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Detailed user profile
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ */
+router.get('/:id/profile', authenticateUser, getUserProfile);
+
+/**
+ * @swagger
+ * /api/users/{id}/media-stats:
+ *   get:
+ *     tags:
+ *       - Users
+ *     summary: Get user media statistics
+ *     description: Retrieve statistics about a user's uploaded media, by type, event, etc.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: User media statistics
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ */
+router.get('/:id/media-stats', authenticateUser, getUserMediaStats);
+
+/**
+ * @swagger
+ * /api/users/{id}/activities:
+ *   get:
+ *     tags:
+ *       - Users
+ *     summary: Get user activities
+ *     description: Retrieve a list of recent user activities including event participations, uploads, etc.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: List of user activities
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status:
+ *                   type: string
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ */
+router.get('/:id/activities', authenticateUser, getUserActivities);
 
 export default router;

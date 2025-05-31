@@ -20,13 +20,15 @@ interface CreateEventInput {
   allowComments?: boolean;
   allowJoining?: boolean;
   coverImageUrl?: string;
+  joinCode?: string | null;
+  joinCodeExpiresAt?: Date | null;
 }
 
 interface UpdateEventInput extends Partial<Omit<CreateEventInput, 'creatorId' | 'visibility'>> {
   visibility?: EventVisibility;
   joinCode?: string | null;
   joinCodeExpiresAt?: Date | null;
-  
+  allowJoining?: boolean;
 }
 
 interface EventWithRelations extends Event {
@@ -78,6 +80,8 @@ export const createEvent = async (
       features, 
       allowComments,
       allowJoining,
+      joinCode,
+      joinCodeExpiresAt,
       coverImageUrl
     }: CreateEventInput = req.body;
     
@@ -105,6 +109,8 @@ export const createEvent = async (
         features: features || [],
         allowComments: allowComments !== undefined ? allowComments : false,
         allowJoining: allowJoining !== undefined ? allowJoining : false,
+        joinCode,
+        joinCodeExpiresAt,
         coverImageUrl,
         creator: { connect: { id: userId } },
       },
@@ -328,6 +334,9 @@ export const updateEvent = async (
       galleryStyle,
       features,
       allowComments,
+      allowJoining,
+      joinCode,
+      joinCodeExpiresAt,
       coverImageUrl
     }: UpdateEventInput = req.body; 
     
@@ -346,6 +355,9 @@ export const updateEvent = async (
         galleryStyle: galleryStyle !== undefined ? galleryStyle : undefined,
         features: features !== undefined ? features : undefined,
         allowComments: allowComments !== undefined ? allowComments : undefined,
+        allowJoining: allowJoining !== undefined ? allowJoining : undefined,
+        joinCode: joinCode !== undefined ? joinCode : undefined,
+        joinCodeExpiresAt: joinCodeExpiresAt !== undefined ? joinCodeExpiresAt : undefined,
         coverImageUrl: coverImageUrl !== undefined ? coverImageUrl : undefined,
       },
       include: {

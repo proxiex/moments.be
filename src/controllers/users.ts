@@ -220,7 +220,8 @@ export const getUserEvents = async (
     const where: any = {
       participants: {
         some: {
-          id,
+          userId: id,
+          status: 'JOINED'
         },
       },
     };
@@ -228,7 +229,7 @@ export const getUserEvents = async (
     if (id !== requestingUserId) {
       where.OR = [
         { isPublicGallery: true },
-        { participants: { some: { id: requestingUserId } } },
+        { participants: { some: { userId: requestingUserId, status: 'JOINED' } } },
       ];
     }
     
@@ -462,6 +463,270 @@ export const getUserParticipation = async (
     }
 
     new ResponseLib(req, res).json(user.events);
+  } catch (error) {
+    next(error);
+  }
+};
+export const getUserProfile = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const requestingUserId = req.user?.id;
+    
+    if (!requestingUserId) {
+      throw new Unauthorized('Authentication required');
+    }
+    
+    const user = await req.prisma?.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        avatar: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: {
+          select: {
+            participations: true,
+            createdEvents: true,
+            images: true,
+          },
+        },
+      },
+    });
+    
+    if (!user) {
+      throw new NotFound('User', 'User not found');
+    }
+    
+    // Get additional profile statistics
+    const participationStats = await req.prisma?.eventParticipant.groupBy({
+      by: ['status'],
+      where: { userId: id },
+      _count: { _all: true },
+    });
+    
+    new ResponseLib(req, res).json({
+      status: 'success',
+      message: 'User profile fetched successfully',
+      data: {
+        ...user,
+        participationStats: participationStats || [],
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getUserMediaStats = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const requestingUserId = req.user?.id;
+    
+    if (!requestingUserId) {
+      throw new Unauthorized('Authentication required');
+    }
+    
+    // Check if user exists
+    const user = await req.prisma?.user.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    
+    if (!user) {
+      throw new NotFound('User', 'User not found');
+    }
+    
+    // Get media count by type
+    const mediaByType = await req.prisma?.image.groupBy({
+      by: ['mediaType'],
+      where: { uploaderId: id },
+      _count: { _all: true },
+    });
+    
+    // Get media count by event
+    // const mediaByEvent = await req.prisma?.image.groupBy({
+    //   by: ['eventId'],
+    //   where: { uploaderId: id },
+    //   _count: { _all: true },
+    // });
+    
+    // Get events with media counts for this user
+    const eventsWithMedia = await req.prisma?.event.findMany({
+      where: {
+        images: {
+          some: { uploaderId: id },
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+        _count: {
+          select: {
+            images: { where: { uploaderId: id } },
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+    
+    // Get total uploads and other stats
+    const totalUploads = await req.prisma?.image.count({
+      where: { uploaderId: id },
+    });
+    
+    const latestUpload = await req.prisma?.image.findFirst({
+      where: { uploaderId: id },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        url: true,
+        mediaType: true,
+        createdAt: true,
+        event: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+    
+    new ResponseLib(req, res).json({
+      status: 'success',
+      message: 'User media statistics fetched successfully',
+      data: {
+        totalUploads,
+        mediaByType: mediaByType || [],
+        eventsWithMedia: eventsWithMedia || [],
+        latestUpload,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getUserActivities = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const requestingUserId = req.user?.id;
+    
+    if (!requestingUserId) {
+      throw new Unauthorized('Authentication required');
+    }
+    
+    // Check if user exists
+    const user = await req.prisma?.user.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    
+    if (!user) {
+      throw new NotFound('User', 'User not found');
+    }
+    
+    // Get recent event participations
+    const recentParticipations = await req.prisma?.eventParticipant.findMany({
+      where: { userId: id },
+      orderBy: { joinedAt: 'desc' },
+      take: 10,
+      include: {
+        event: {
+          select: {
+            id: true,
+            name: true,
+            createdAt: true,
+            startDate: true,
+            endDate: true,
+            creator: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    
+    // Get recent media uploads
+    const recentUploads = await req.prisma?.image.findMany({
+      where: { uploaderId: id },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+      select: {
+        id: true,
+        url: true,
+        mediaType: true,
+        createdAt: true,
+        event: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+    
+    // Get recent event creations
+    const recentCreatedEvents = await req.prisma?.event.findMany({
+      where: { creatorId: id },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+      select: {
+        id: true,
+        name: true,
+        createdAt: true,
+        _count: {
+          select: {
+            participants: true,
+            images: true,
+          },
+        },
+      },
+    });
+    
+    // Combine activities in chronological order
+    const activities = [
+      ...(recentParticipations?.map(p => ({
+        type: 'participation',
+        timestamp: p.joinedAt,
+        data: p,
+      })) || []),
+      ...(recentUploads?.map(u => ({
+        type: 'upload',
+        timestamp: u.createdAt,
+        data: u,
+      })) || []),
+      ...(recentCreatedEvents?.map(e => ({
+        type: 'event_creation',
+        timestamp: e.createdAt,
+        data: e,
+      })) || []),
+    ].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+     .slice(0, 20);
+    
+    new ResponseLib(req, res).json({
+      status: 'success',
+      message: 'User activities fetched successfully',
+      data: activities,
+    });
   } catch (error) {
     next(error);
   }
