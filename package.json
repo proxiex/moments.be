@@ -1,7 +1,7 @@
 {
-  "name": "scrapbook-event-backend",
+  "name": "moments-backend",
   "version": "1.0.0",
-  "description": "Backend server for Scrapbook Events app",
+  "description": "Backend server for Moments app",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
